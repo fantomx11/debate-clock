@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi-Role Debate Chess Clock</title>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #121212;
+            --panel-bg: #1e1e1e;
+            --accent-active: #00adb5;
+            --mod-color: #e63946;
+            --text-color: #eeeeee;
+            --text-muted: #888888;
+            --border-color: #333;
+        }
+
+        body {
+            margin: 0;
+            font-family: system-ui, -apple-system, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* Setup Screen Overlay */
+        #setup-screen {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: var(--bg-color);
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .setup-card {
+            background: var(--panel-bg);
+            padding: 30px;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            width: 90%;
+            max-width: 450px;
+            text-align: center;
+        }
+
+        /* Top Status/Control Bar */
+        #nav-bar {
+            background-color: var(--panel-bg);
+            padding: 10px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 2px solid var(--border-color);
+        }
+
+        /* Moderator Dashboard */
+        #mod-dashboard {
+            background: #251c1c;
+            border-bottom: 2px solid var(--mod-color);
+            padding: 10px 20px;
+            display: none;
+            gap: 15px;
+            align-items: center;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        /* Layout Grids */
+        #clock-container {
+            display: flex;
+            flex: 1;
+            width: 100%;
+        }
+
+        .clock-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+            border: 1px solid #222;
+            background: #151515;
+        }
+
+        /* Role-based Interactivity UI states */
+        .interactive {
+            cursor: pointer;
+            user-select: none;
+            transition: background 0.2s;
+        }
+        .interactive:hover { background: #1c1c1c; }
+        .interactive:active { transform: scale(0.99); }
+
+        .clock-panel.running {
+            background-color: #16262e;
+        }
+        .clock-panel.running .time-display {
+            color: var(--accent-active);
+            text-shadow: 0 0 15px rgba(0,173,181,0.4);
+        }
+
+        .role-label {
+            font-size: 1.2rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-bottom: 5px;
+        }
+        
+        .sub-label {
+            font-size: 0.9rem;
+            color: #666;
+            margin-bottom: 15px;
+        }
+
+        .time-display {
+            font-size: 6rem;
+            font-family: monospace;
+            font-weight: 700;
+        }
+
+        /* Forms & Buttons */
+        .btn {
+            background-color: #333;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        .btn:hover { background-color: #444; }
+        .btn-accent { background-color: var(--accent-active); }
+        .btn-accent:hover { background-color: #008c95; }
+        .btn-mod { background-color: var(--mod-color); }
+        .btn-mod:hover { background-color: #b82c37; }
+        
+        select, input {
+            background: #2d2d2d;
+            border: 1px solid #444;
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 14px;
+            margin: 5px;
+        }
+
+        .badge {
+            background: #333;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 1. SETUP & ROLE SELECTION SCREEN -->
+    <div id="setup-screen">
+        <div class="setup-card">
+            <h2>Debate Clock Setup</h2>
+            
+            <label for="role-select">Choose Your Role:</label><br>
+            <select id="role-select" style="width: 80%; margin-bottom: 20px;">
+                <option value="Questioner">Questioner (Controls Clock A)</option>
+                <option value="Respondent">Respondent (Controls Clock B)</option>
+                <option value="Moderator">Moderator (Full Master Control)</option>
+                <option value="Observer">Observer (View Only)</option>
+            </select>
+
+            <hr style="border-color: var(--border-color); margin: 20px 0;">
+
+            <h3>Option A: Create a New Room</h3>
+            <button class="btn btn-accent" id="host-btn">Host Room</button>
+
+            <h3>Option B: Join Existing Room</h3>
+            <input type="text" id="join-id-input" placeholder="Enter Host Room ID" style="width: 75%;"><br><br>
+            <button class="btn" id="join-btn">Join Room</button>
+        </div>
+    </div>
+
+    <!-- 2. MAIN APPLICATION NAV BAR -->
+    <div id="nav-bar">
+        <div>Role: <span id="role-badge" class="badge">None</span></div>
+        <div>Room ID: <strong id="room-id-display" style="color: var(--accent-active)">---</strong></div>
+        <div id="net-status" style="color: #ffb703;">Initializing...</div>
+    </div>
+
+    <!-- 3. MASTER MODERATOR DASHBOARD -->
+    <div id="mod-dashboard">
+        <strong style="color: var(--mod-color)">MOD PANEL:</strong>
+        <button class="btn btn-mod" onclick="sendModCommand('TOGGLE', 'A')">Start/Pause Q</button>
+        <button class="btn btn-mod" onclick="sendModCommand('TOGGLE', 'B')">Start/Pause R</button>
+        <button class="btn btn-mod" onclick="sendModCommand('PAUSE_ALL')">Pause Both</button>
+        <button class="btn btn-mod" onclick="sendModCommand('RESET')">Reset Match</button>
+        | 
+        <span>Adjust Q:</span>
+        <button class="btn" onclick="sendModCommand('ADJUST', 'A', 15)">+15s</button>
+        <button class="btn" onclick="sendModCommand('ADJUST', 'A', -15)">-15s</button>
+        | 
+        <span>Adjust R:</span>
+        <button class="btn" onclick="sendModCommand('ADJUST', 'B', 15)">+15s</button>
+        <button class="btn" onclick="sendModCommand('ADJUST', 'B', -15)">-15s</button>
+    </div>
+
+    <!-- 4. DECOUPLED CLOCK PANELS -->
+    <div id="clock-container">
+        <!-- Clock A: Questioner -->
+        <div class="clock-panel" id="panel-A" onclick="handlePanelClick('A')">
+            <div class="role-label">Questioner</div>
+            <div class="sub-label" id="control-hint-A">View Only</div>
+            <div class="time-display" id="display-A">03:00</div>
+        </div>
+        <!-- Clock B: Respondent -->
+        <div class="clock-panel" id="panel-B" onclick="handlePanelClick('B')">
+            <div class="role-label">Respondent</div>
+            <div class="sub-label" id="control-hint-B">View Only</div>
+            <div class="time-display" id="display-B">03:00</div>
+        </div>
+    </div>
+
+    <script>
+        // --- System Configurations & States ---
+        const DEFAULT_TIME = 180; // 3 mins
+        let myRole = 'Observer';
+        let isHost = false;
+
+        // The Master State Struct (Only mutated definitively by the designated Host)
+        let state = {
+            timeA: DEFAULT_TIME,
+            timeB: DEFAULT_TIME,
+            runningA: false,
+            runningB: false
+        };
+
+        // Network Topology handles
+        let peer = null;
+        let hostConnection = null; // Used by Clients to send requests up to Host
+        let clientConnections = []; // Used by Host to broadcast states down to Clients
+
+        // DOM Handles
+        const setupScreen = document.getElementById('setup-screen');
+        const roleSelect = document.getElementById('role-select');
+        const roleBadge = document.getElementById('role-badge');
+        const roomIdDisplay = document.getElementById('room-id-display');
+        const netStatus = document.getElementById('net-status');
+        const modDashboard = document.getElementById('mod-dashboard');
+
+        // --- Core Application Initialization Flows ---
+        
+        document.getElementById('host-btn').addEventListener('click', () => {
+            myRole = roleSelect.value;
+            isHost = true;
+            initializePeer();
+        });
+
+        document.getElementById('join-btn').addEventListener('click', () => {
+            const targetId = document.getElementById('join-id-input').value.trim();
+            if (!targetId) return alert("Please enter a valid Room ID.");
+            myRole = roleSelect.value;
+            isHost = false;
+            initializePeer(targetId);
+        });
+
+        function initializePeer(targetHostId = null) {
+            netStatus.textContent = "Connecting to network platform...";
+            peer = new Peer();
+
+            peer.on('open', (id) => {
+                setupScreen.style.display = 'none';
+                roleBadge.textContent = myRole;
+                
+                if (isHost) {
+                    roomIdDisplay.textContent = id;
+                    netStatus.textContent = "Room Created. Waiting for peers...";
+                    setupHostLogic();
+                } else {
+                    roomIdDisplay.textContent = targetHostId;
+                    netStatus.textContent = "Connecting to Room Host...";
+                    setupClientLogic(targetHostId);
+                }
+                configureLocalUIInteractivity();
+            });
+
+            peer.on('error', (err) => {
+                console.error(err);
+                alert("Network connectivity error: " + err.type);
+                location.reload();
+            });
+        }
+
+        // --- Role Permission & Interactivity Handling ---
+        function configureLocalUIInteractivity() {
+            if (myRole === 'Moderator') {
+                modDashboard.style.display = 'flex';
+            }
+            
+            if (myRole === 'Questioner' || myRole === 'Moderator') {
+                const pA = document.getElementById('panel-A');
+                pA.classList.add('interactive');
+                document.getElementById('control-hint-A').textContent = "Click to Toggle/Interrupt";
+            }
+            if (myRole === 'Respondent' || myRole === 'Moderator') {
+                const pB = document.getElementById('panel-B');
+                pB.classList.add('interactive');
+                document.getElementById('control-hint-B').textContent = "Click to Toggle/Interrupt";
+            }
+        }
+
+        // --- Router: Interactivity Clicks ---
+        function handlePanelClick(panelClicked) {
+            // Check authorization local-level guarantees
+            if (panelClicked === 'A' && myRole !== 'Questioner' && myRole !== 'Moderator') return;
+            if (panelClicked === 'B' && myRole !== 'Respondent' && myRole !== 'Moderator') return;
+
+            if (isHost) {
+                // Host processes state mutations directly
+                toggleClock(panelClicked);
+            } else {
+                // Client requests host execution
+                if (hostConnection && hostConnection.open) {
+                    hostConnection.send({ type: 'REQUEST_TOGGLE', clock: panelClicked });
+                }
+            }
+        }
+
+        function sendModCommand(action, clock = null, amount = 0) {
+            if (myRole !== 'Moderator') return;
+            
+            if (isHost) {
+                executeModAction(action, clock, amount);
+            } else {
+                if (hostConnection && hostConnection.open) {
+                    hostConnection.send({ type: 'REQUEST_MOD', action, clock, amount });
+                }
+            }
+        }
+
+        // --- Host Master Engines ---
+        let masterInterval = null;
+
+        function setupHostLogic() {
+            // 1. Process client connection registrations
+            peer.on('connection', (conn) => {
+                clientConnections.push(conn);
+                
+                conn.on('open', () => {
+                    conn.send({ type: 'STATE_UPDATE', state });
+                });
+
+                conn.on('data', (data) => {
+                    if (data.type === 'REQUEST_TOGGLE') {
+                        toggleClock(data.clock);
+                    } else if (data.type === 'REQUEST_MOD') {
+                        executeModAction(data.action, data.clock, data.amount);
+                    }
+                });
+
+                conn.on('close', () => {
+                    clientConnections = clientConnections.filter(c => c.peer !== conn.peer);
+                });
+            });
+
+            // 2. Start core ticker loop
+            masterInterval = setInterval(() => {
+                let stateChanged = false;
+                if (state.runningA) {
+                    state.timeA = Math.max(0, state.timeA - 1);
+                    if(state.timeA === 0) state.runningA = false;
+                    stateChanged = true;
+                }
+                if (state.runningB) {
+                    state.timeB = Math.max(0, state.timeB - 1);
+                    if(state.timeB === 0) state.runningB = false;
+                    stateChanged = true;
+                }
+
+                if (stateChanged || state.runningA || state.runningB) {
+                    broadcastState();
+                    updateLocalUI();
+                }
+            }, 1000);
+        }
+
+        function toggleClock(clock) {
+            if (clock === 'A') {
+                state.runningA = !state.runningA;
+            } else if (clock === 'B') {
+                state.runningB = !state.runningB;
+            }
+            broadcastState();
+            updateLocalUI();
+        }
+
+        function executeModAction(action, clock, amount) {
+            if (action === 'TOGGLE') {
+                toggleClock(clock);
+                return;
+            } else if (action === 'PAUSE_ALL') {
+                state.runningA = false;
+                state.runningB = false;
+            } else if (action === 'RESET') {
+                state.runningA = false;
+                state.runningB = false;
+                state.timeA = DEFAULT_TIME;
+                state.timeB = DEFAULT_TIME;
+            } else if (action === 'ADJUST') {
+                if (clock === 'A') state.timeA = Math.max(0, state.timeA + amount);
+                if (clock === 'B') state.timeB = Math.max(0, state.timeB + amount);
+            }
+            broadcastState();
+            updateLocalUI();
+        }
+
+        function broadcastState() {
+            clientConnections.forEach(conn => {
+                if (conn.open) {
+                    conn.send({ type: 'STATE_UPDATE', state });
+                }
+            });
+        }
+
+        // --- Client Networking Engine ---
+        function setupClientLogic(targetHostId) {
+            hostConnection = peer.connect(targetHostId);
+
+            hostConnection.on('open', () => {
+                netStatus.textContent = "Connected to Room Room.";
+                netStatus.style.color = "#85e3b3";
+            });
+
+            hostConnection.on('data', (data) => {
+                if (data.type === 'STATE_UPDATE') {
+                    state = data.state;
+                    updateLocalUI();
+                }
+            });
+
+            hostConnection.on('close', () => {
+                netStatus.textContent = "Host closed session.";
+                netStatus.style.color = "#e63946";
+                alert("Disconnected from Host.");
+            });
+        }
+
+        // --- Presentation Rendering Layers ---
+        function formatTime(seconds) {
+            const mins = Math.floor(seconds / 60).toString().padStart(2, '0');
+            const secs = (seconds % 60).toString().padStart(2, '0');
+            return `${mins}:${secs}`;
+        }
+
+        function updateLocalUI() {
+            document.getElementById('display-A').textContent = formatTime(state.timeA);
+            document.getElementById('display-B').textContent = formatTime(state.timeB);
+
+            document.getElementById('panel-A').classList.toggle('running', state.runningA);
+            document.getElementById('panel-B').classList.toggle('running', state.runningB);
+            
+            if (isHost) {
+                netStatus.textContent = `Active Room. Peers Connected: ${clientConnections.length}`;
+            }
+        }
+
+        // Bind Spacebar macro only for authorized users to pause both quickly
+        document.addEventListener('keydown', (e) => {
+            if (e.code === 'Space' && e.target.tagName !== 'INPUT' && e.target.tagName !== 'SELECT') {
+                e.preventDefault();
+                if (myRole === 'Moderator') {
+                    sendModCommand('PAUSE_ALL');
+                } else if (myRole === 'Questioner') {
+                    handlePanelClick('A');
+                } else if (myRole === 'Respondent') {
+                    handlePanelClick('B');
+                }
+            }
+        });
+
+        // Initialize display values on startup
+        updateLocalUI();
+    </script>
+</body>
+</html>
