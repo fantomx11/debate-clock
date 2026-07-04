@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Multi-Role Debate Chess Clock</title>
+    <title>Debate Cross-Exam Chess Clock</title>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
         :root {
@@ -27,7 +27,6 @@
             overflow: hidden;
         }
 
-        /* Setup Screen Overlay */
         #setup-screen {
             position: fixed;
             top: 0; left: 0; width: 100%; height: 100%;
@@ -50,7 +49,6 @@
             text-align: center;
         }
 
-        /* Top Status/Control Bar */
         #nav-bar {
             background-color: var(--panel-bg);
             padding: 10px 20px;
@@ -60,7 +58,6 @@
             border-bottom: 2px solid var(--border-color);
         }
 
-        /* Moderator Dashboard */
         #mod-dashboard {
             background: #251c1c;
             border-bottom: 2px solid var(--mod-color);
@@ -72,7 +69,6 @@
             flex-wrap: wrap;
         }
 
-        /* Layout Grids */
         #clock-container {
             display: flex;
             flex: 1;
@@ -90,7 +86,6 @@
             background: #151515;
         }
 
-        /* Role-based Interactivity UI states */
         .interactive {
             cursor: pointer;
             user-select: none;
@@ -127,7 +122,6 @@
             font-weight: 700;
         }
 
-        /* Forms & Buttons */
         .btn {
             background-color: #333;
             color: white;
@@ -164,10 +158,10 @@
 </head>
 <body>
 
-    <!-- 1. SETUP & ROLE SELECTION SCREEN -->
+    <!-- 1. SETUP SCREEN -->
     <div id="setup-screen">
         <div class="setup-card">
-            <h2>Debate Clock Setup</h2>
+            <h2>Anti-Filibuster Debate Clock</h2>
             
             <label for="role-select">Choose Your Role:</label><br>
             <select id="role-select" style="width: 80%; margin-bottom: 20px;">
@@ -188,14 +182,14 @@
         </div>
     </div>
 
-    <!-- 2. MAIN APPLICATION NAV BAR -->
+    <!-- 2. MAIN NAV BAR -->
     <div id="nav-bar">
         <div>Role: <span id="role-badge" class="badge">None</span></div>
         <div>Room ID: <strong id="room-id-display" style="color: var(--accent-active)">---</strong></div>
         <div id="net-status" style="color: #ffb703;">Initializing...</div>
     </div>
 
-    <!-- 3. MASTER MODERATOR DASHBOARD -->
+    <!-- 3. MODERATOR DASHBOARD -->
     <div id="mod-dashboard">
         <strong style="color: var(--mod-color)">MOD PANEL:</strong>
         <button class="btn btn-mod" onclick="sendModCommand('TOGGLE', 'A')">Start/Pause Q</button>
@@ -212,15 +206,13 @@
         <button class="btn" onclick="sendModCommand('ADJUST', 'B', -15)">-15s</button>
     </div>
 
-    <!-- 4. DECOUPLED CLOCK PANELS -->
+    <!-- 4. CLOCK PANELS -->
     <div id="clock-container">
-        <!-- Clock A: Questioner -->
         <div class="clock-panel" id="panel-A" onclick="handlePanelClick('A')">
             <div class="role-label">Questioner</div>
             <div class="sub-label" id="control-hint-A">View Only</div>
             <div class="time-display" id="display-A">03:00</div>
         </div>
-        <!-- Clock B: Respondent -->
         <div class="clock-panel" id="panel-B" onclick="handlePanelClick('B')">
             <div class="role-label">Respondent</div>
             <div class="sub-label" id="control-hint-B">View Only</div>
@@ -229,8 +221,7 @@
     </div>
 
     <script>
-        // --- System Configurations & States ---
-        const DEFAULT_TIME = 180; // 3 mins
+        const DEFAULT_TIME = 180; 
         let myRole = 'Observer';
         let isHost = false;
 
@@ -252,7 +243,6 @@
         const netStatus = document.getElementById('net-status');
         const modDashboard = document.getElementById('mod-dashboard');
 
-        // --- Entry Points ---
         document.getElementById('host-btn').addEventListener('click', () => {
             myRole = roleSelect.value;
             isHost = true;
@@ -268,14 +258,14 @@
         });
 
         function initializePeer(targetHostId = null) {
-            netStatus.textContent = "Connecting to signaling server...";
+            netStatus.textContent = "Connecting to global network...";
             
-            // Native global STUN configurations
             peer = new Peer({
                 config: {
                     'iceServers': [
                         { urls: 'stun:stun.l.google.com:19302' },
-                        { urls: 'stun:stun1.l.google.com:19302' }
+                        { urls: 'stun:stun1.l.google.com:19302' },
+                        { urls: 'stun:stun2.l.google.com:19302' }
                     ]
                 }
             });
@@ -283,25 +273,26 @@
             peer.on('open', (id) => {
                 setupScreen.style.display = 'none';
                 roleBadge.textContent = myRole;
+                console.log("PeerJS platform authenticated. ID:", id);
                 
                 if (isHost) {
                     roomIdDisplay.textContent = id;
                     setupHostLogic();
-                    updateLocalUI(); // Force instant UI refresh to show 0 peers
+                    updateLocalUI();
                 } else {
                     roomIdDisplay.textContent = targetHostId;
-                    netStatus.textContent = "Connecting to Room Host...";
                     setupClientLogic(targetHostId);
                 }
                 configureLocalUIInteractivity();
             });
 
             peer.on('error', (err) => {
-                console.error("Peer Platform Error:", err);
+                console.error("PeerJS Critical Error:", err);
+                netStatus.textContent = "Error: " + err.type;
+                netStatus.style.color = "#e63946";
                 if (err.type === 'peer-unavailable') {
-                    alert("Room ID not found! Please check the host's exact string.");
-                    setupScreen.style.display = 'flex';
-                    netStatus.textContent = "Disconnected";
+                    alert("Room ID not found! Ensure the host room is open and active.");
+                    location.reload();
                 }
             });
         }
@@ -312,11 +303,11 @@
             }
             if (myRole === 'Questioner' || myRole === 'Moderator') {
                 document.getElementById('panel-A').classList.add('interactive');
-                document.getElementById('control-hint-A').textContent = "Click to Toggle/Interrupt";
+                document.getElementById('control-hint-A').textContent = "Click to Toggle Your Clock";
             }
             if (myRole === 'Respondent' || myRole === 'Moderator') {
                 document.getElementById('panel-B').classList.add('interactive');
-                document.getElementById('control-hint-B').textContent = "Click to Toggle/Interrupt";
+                document.getElementById('control-hint-B').textContent = "Click to Toggle Your Clock";
             }
         }
 
@@ -329,6 +320,8 @@
             } else {
                 if (hostConnection && hostConnection.open) {
                     hostConnection.send({ type: 'REQUEST_TOGGLE', clock: panelClicked });
+                } else {
+                    alert("Action blocked: Still establishing data channel with Host. Please wait a moment.");
                 }
             }
         }
@@ -338,10 +331,24 @@
 
         function setupHostLogic() {
             peer.on('connection', (conn) => {
-                clientConnections.push(conn);
-                updateLocalUI(); // **FIX**: Update Host UI peer count instantly when client arrives
+                console.log("Host detected connection signal request from peer:", conn.peer);
+
+                // **FIX 1**: Do NOT push or increment UI state until the WebRTC pipeline is truly OPEN.
+                conn.on('open', () => {
+                    console.log("WebRTC Data Channel explicitly OPENED with client:", conn.peer);
+                    clientConnections.push(conn);
+                    updateLocalUI(); 
+
+                    // **FIX 2**: Short 200ms stabilization delay before firing structural payloads
+                    setTimeout(() => {
+                        if (conn.open) {
+                            conn.send({ type: 'STATE_UPDATE', state });
+                        }
+                    }, 200);
+                });
 
                 conn.on('data', (data) => {
+                    console.log("Host received structural packet:", data);
                     if (data.type === 'REQUEST_TOGGLE') {
                         toggleClock(data.clock);
                     } else if (data.type === 'REQUEST_MOD') {
@@ -352,18 +359,10 @@
                 });
 
                 conn.on('close', () => {
+                    console.log("Connection closed by client:", conn.peer);
                     clientConnections = clientConnections.filter(c => c.peer !== conn.peer);
-                    updateLocalUI(); // **FIX**: Update Host UI peer count instantly on disconnect
+                    updateLocalUI();
                 });
-
-                // Dispatch state packet instantly over streaming pipeline
-                if (conn.open) {
-                    conn.send({ type: 'STATE_UPDATE', state });
-                } else {
-                    conn.on('open', () => {
-                        conn.send({ type: 'STATE_UPDATE', state });
-                    });
-                }
             });
 
             masterInterval = setInterval(() => {
@@ -400,6 +399,8 @@
             } else {
                 if (hostConnection && hostConnection.open) {
                     hostConnection.send({ type: 'REQUEST_MOD', action, clock, amount });
+                } else {
+                    alert("Moderator command blocked: Lost connection to host.");
                 }
             }
         }
@@ -432,40 +433,41 @@
 
         // --- Client Networking Engine ---
         function setupClientLogic(targetHostId) {
-            // **FIX**: Dropped custom object options to let native serialization pass cleanly
-            hostConnection = peer.connect(targetHostId);
+            console.log("Client calling peer.connect() target:", targetHostId);
+            netStatus.textContent = "Connecting to Room Host...";
+            
+            hostConnection = peer.connect(targetHostId, { reliable: true });
 
-            const setClientConnectedUI = () => {
+            hostConnection.on('open', () => {
+                console.log("Client reports Data Channel is OPEN to host.");
                 netStatus.textContent = "Connected to Room!";
                 netStatus.style.color = "#85e3b3";
-            };
-
-            if (hostConnection.open) {
-                setClientConnectedUI();
-                hostConnection.send({ type: 'REQUEST_SYNC' });
-            } else {
-                hostConnection.on('open', () => {
-                    setClientConnectedUI();
-                    hostConnection.send({ type: 'REQUEST_SYNC' });
-                });
-            }
+                
+                // Ask for state explicitly after a minor synchronization buffer
+                setTimeout(() => {
+                    if (hostConnection.open) {
+                        hostConnection.send({ type: 'REQUEST_SYNC' });
+                    }
+                }, 200);
+            });
 
             hostConnection.on('data', (data) => {
                 if (data.type === 'STATE_UPDATE') {
                     state = data.state;
-                    // **FIX**: Bulletproof UI verification check fallback
-                    setClientConnectedUI();
+                    netStatus.textContent = "Connected to Room!";
+                    netStatus.style.color = "#85e3b3";
                     updateLocalUI();
                 }
             });
 
             hostConnection.on('close', () => {
+                console.log("Host severed connection.");
                 netStatus.textContent = "Host left session.";
                 netStatus.style.color = "#e63946";
             });
         }
 
-        // --- UI Paint Engines ---
+        // --- UI Refreshes ---
         function formatTime(seconds) {
             const mins = Math.floor(seconds / 60).toString().padStart(2, '0');
             const secs = (seconds % 60).toString().padStart(2, '0');
@@ -485,7 +487,6 @@
             }
         }
 
-        // Global hotkey binding
         document.addEventListener('keydown', (e) => {
             if (e.code === 'Space' && e.target.tagName !== 'INPUT' && e.target.tagName !== 'SELECT') {
                 e.preventDefault();
