@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Debate Cross-Exam Chess Clock</title>
-    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <title>Dynamic Debate Chess Clock</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/5.14.1/mqtt.min.js"></script>
     <style>
         :root {
             --bg-color: #121212;
@@ -27,6 +27,7 @@
             overflow: hidden;
         }
 
+        /* Setup Configurations */
         #setup-screen {
             position: fixed;
             top: 0; left: 0; width: 100%; height: 100%;
@@ -49,6 +50,9 @@
             text-align: center;
         }
 
+        #standard-setup, #invite-setup { display: none; }
+
+        /* Navigation Metrics bar */
         #nav-bar {
             background-color: var(--panel-bg);
             padding: 10px 20px;
@@ -56,6 +60,8 @@
             justify-content: space-between;
             align-items: center;
             border-bottom: 2px solid var(--border-color);
+            flex-wrap: wrap;
+            gap: 10px;
         }
 
         #mod-dashboard {
@@ -69,59 +75,102 @@
             flex-wrap: wrap;
         }
 
+        .mod-group {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            background: rgba(0,0,0,0.2);
+            padding: 5px 10px;
+            border-radius: 4px;
+            border: 1px solid #444;
+        }
+
+        /* Clock Grid Container Layout */
         #clock-container {
             display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            padding: 20px;
             flex: 1;
-            width: 100%;
+            overflow-y: auto;
+            justify-content: center;
+            align-items: center;
         }
 
         .clock-panel {
+            background: #151515;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 25px;
+            min-width: 290px;
+            max-width: 420px;
             flex: 1;
             display: flex;
             flex-direction: column;
             justify-content: center;
             align-items: center;
             position: relative;
-            border: 1px solid #222;
-            background: #151515;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+
+        .clock-panel.single-view {
+            max-width: 600px;
+            width: 80%;
+            height: 60vh;
         }
 
         .interactive {
             cursor: pointer;
             user-select: none;
-            transition: background 0.2s;
+            transition: background 0.2s, transform 0.1s;
         }
         .interactive:hover { background: #1c1c1c; }
         .interactive:active { transform: scale(0.99); }
 
         .clock-panel.running {
             background-color: #16262e;
+            border-color: var(--accent-active);
         }
         .clock-panel.running .time-display {
             color: var(--accent-active);
             text-shadow: 0 0 15px rgba(0,173,181,0.4);
         }
 
-        .role-label {
-            font-size: 1.2rem;
-            color: var(--text-muted);
-            text-transform: uppercase;
-            letter-spacing: 2px;
+        .speaker-name {
+            font-size: 1.8rem;
+            font-weight: bold;
+            color: var(--text-color);
             margin-bottom: 5px;
-        }
-        
-        .sub-label {
-            font-size: 0.9rem;
-            color: #666;
-            margin-bottom: 15px;
+            text-transform: capitalize;
         }
 
         .time-display {
-            font-size: 6rem;
+            font-size: 5rem;
             font-family: monospace;
             font-weight: 700;
+            margin: 10px 0;
+        }
+        
+        .clock-panel.single-view .time-display {
+            font-size: 8rem;
         }
 
+        .sub-label {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            letter-spacing: 1px;
+        }
+
+        .panel-controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            margin-top: 15px;
+            width: 100%;
+            justify-content: center;
+        }
+
+        /* Generic Utilities */
         .btn {
             background-color: #333;
             color: white;
@@ -136,6 +185,7 @@
         .btn-accent:hover { background-color: #008c95; }
         .btn-mod { background-color: var(--mod-color); }
         .btn-mod:hover { background-color: #b82c37; }
+        .btn-sm { padding: 5px 10px; font-size: 0.8rem; }
         
         select, input {
             background: #2d2d2d;
@@ -161,338 +211,354 @@
     <!-- 1. SETUP SCREEN -->
     <div id="setup-screen">
         <div class="setup-card">
-            <h2>Anti-Filibuster Debate Clock</h2>
+            <h2>Anti-Filibuster Debate Arena</h2>
             
-            <label for="role-select">Choose Your Role:</label><br>
-            <select id="role-select" style="width: 80%; margin-bottom: 20px;">
-                <option value="Questioner">Questioner (Controls Clock A)</option>
-                <option value="Respondent">Respondent (Controls Clock B)</option>
-                <option value="Moderator">Moderator (Full Master Control)</option>
-                <option value="Observer">Observer (View Only)</option>
-            </select>
+            <!-- Standard Mode -->
+            <div id="standard-setup">
+                <p>Start a new session as Master Moderator or join an active room code manually.</p>
+                <button class="btn btn-accent" id="host-btn" style="width: 80%; margin-bottom: 25px;">Host as Moderator</button>
+                <hr style="border-color: var(--border-color); margin: 20px 0;">
+                <input type="text" id="join-id-input" placeholder="Enter Room Code" style="width: 75%; text-align: center;"><br>
+                <input type="text" id="join-name-input" placeholder="Your Name" style="width: 75%; text-align: center;"><br><br>
+                <button class="btn" id="join-btn">Join Session</button>
+            </div>
 
-            <hr style="border-color: var(--border-color); margin: 20px 0;">
-
-            <h3>Option A: Create a New Room</h3>
-            <button class="btn btn-accent" id="host-btn">Host Room</button>
-
-            <h3>Option B: Join Existing Room</h3>
-            <input type="text" id="join-id-input" placeholder="Enter Host Room ID" style="width: 75%;"><br><br>
-            <button class="btn" id="join-btn">Join Room</button>
+            <!-- Auto-Join Invite Mode -->
+            <div id="invite-setup">
+                <p>You have been invited to join Room: <strong id="invite-room-label" style="color:var(--accent-active)">-----</strong></p>
+                <input type="text" id="invite-name-input" placeholder="Enter Your Name" style="width: 80%; font-size: 1.1rem; text-align: center;"><br><br>
+                <button class="btn btn-accent" id="invite-submit-btn" style="width: 80%;">Connect to Clock</button>
+            </div>
         </div>
     </div>
 
-    <!-- 2. MAIN NAV BAR -->
+    <!-- 2. MAIN NAV METRICS BAR -->
     <div id="nav-bar">
-        <div>Role: <span id="role-badge" class="badge">None</span></div>
-        <div>Room ID: <strong id="room-id-display" style="color: var(--accent-active)">---</strong></div>
-        <div id="net-status" style="color: #ffb703;">Initializing...</div>
+        <div>Identity: <span id="role-badge" class="badge">None</span></div>
+        <div>Room Code: <strong id="room-id-display" style="color: var(--accent-active)">---</strong></div>
+        <div id="invite-link-wrapper" style="display:none;">
+            <button class="btn btn-sm btn-accent" id="copy-link-btn">Copy Invite Link</button>
+        </div>
+        <div id="net-status" style="color: #ffb703;">Disconnected</div>
     </div>
 
-    <!-- 3. MODERATOR DASHBOARD -->
+    <!-- 3. GLOBAL MASTER MODERATOR COMMAND RAIL -->
     <div id="mod-dashboard">
-        <strong style="color: var(--mod-color)">MOD PANEL:</strong>
-        <button class="btn btn-mod" onclick="sendModCommand('TOGGLE', 'A')">Start/Pause Q</button>
-        <button class="btn btn-mod" onclick="sendModCommand('TOGGLE', 'B')">Start/Pause R</button>
-        <button class="btn btn-mod" onclick="sendModCommand('PAUSE_ALL')">Pause Both</button>
-        <button class="btn btn-mod" onclick="sendModCommand('RESET')">Reset Match</button>
-        | 
-        <span>Adjust Q:</span>
-        <button class="btn" onclick="sendModCommand('ADJUST', 'A', 15)">+15s</button>
-        <button class="btn" onclick="sendModCommand('ADJUST', 'A', -15)">-15s</button>
-        | 
-        <span>Adjust R:</span>
-        <button class="btn" onclick="sendModCommand('ADJUST', 'B', 15)">+15s</button>
-        <button class="btn" onclick="sendModCommand('ADJUST', 'B', -15)">-15s</button>
+        <strong style="color: var(--mod-color)">MASTER CONTROLS:</strong>
+        
+        <div class="mod-group">
+            <label for="default-time-input" style="font-size: 0.85rem; color: var(--text-muted);">New Clock Default (sec):</label>
+            <input type="number" id="default-time-input" value="180" min="1" style="width: 60px; padding: 4px; margin: 0; font-size: 0.85rem;">
+            <button class="btn btn-sm btn-accent" onclick="updateGlobalDefaultTime()">Set</button>
+        </div>
+
+        <button class="btn btn-sm btn-mod" onclick="sendGlobalModAction('PAUSE_ALL')">Pause All Clocks</button>
+        <button class="btn btn-sm btn-mod" onclick="sendGlobalModAction('RESET_ALL')">Reset All to Default</button>
     </div>
 
-    <!-- 4. CLOCK PANELS -->
+    <!-- 4. DYNAMIC SPEAKERS CLOCK CONTAINER -->
     <div id="clock-container">
-        <div class="clock-panel" id="panel-A" onclick="handlePanelClick('A')">
-            <div class="role-label">Questioner</div>
-            <div class="sub-label" id="control-hint-A">View Only</div>
-            <div class="time-display" id="display-A">03:00</div>
-        </div>
-        <div class="clock-panel" id="panel-B" onclick="handlePanelClick('B')">
-            <div class="role-label">Respondent</div>
-            <div class="sub-label" id="control-hint-B">View Only</div>
-            <div class="time-display" id="display-B">03:00</div>
-        </div>
+        <div style="color: var(--text-muted); font-style: italic;" id="empty-state-msg">Waiting for speakers to step up...</div>
     </div>
 
     <script>
-        const DEFAULT_TIME = 180; 
-        let myRole = 'Observer';
+        const TOPIC_NAMESPACE = "debate_sys_dynamic_2026_";
+        
         let isHost = false;
+        let roomId = '';
+        let myUsername = ''; 
+        let mqttClient = null;
 
+        // Shared architectural state schema
         let state = {
-            timeA: DEFAULT_TIME,
-            timeB: DEFAULT_TIME,
-            runningA: false,
-            runningB: false
+            defaultTime: 180, // Tracked dynamically by host
+            speakers: {} 
         };
 
-        let peer = null;
-        let hostConnection = null; 
-        let clientConnections = []; 
-
+        // DOM Handles
         const setupScreen = document.getElementById('setup-screen');
-        const roleSelect = document.getElementById('role-select');
+        const standardSetup = document.getElementById('standard-setup');
+        const inviteSetup = document.getElementById('invite-setup');
         const roleBadge = document.getElementById('role-badge');
         const roomIdDisplay = document.getElementById('room-id-display');
         const netStatus = document.getElementById('net-status');
         const modDashboard = document.getElementById('mod-dashboard');
+        const clockContainer = document.getElementById('clock-container');
+        const inviteLinkWrapper = document.getElementById('invite-link-wrapper');
+        const defaultTimeInput = document.getElementById('default-time-input');
 
+        // --- URL Parameter Interceptor Scan ---
+        const urlParams = new URLSearchParams(window.location.search);
+        const urlRoomCode = urlParams.get('room');
+
+        if (urlRoomCode) {
+            roomId = urlRoomCode.trim();
+            inviteSetup.style.display = 'block';
+            document.getElementById('invite-room-label').textContent = roomId;
+        } else {
+            standardSetup.style.display = 'block';
+        }
+
+        // --- Event Listeners UI Bindings ---
         document.getElementById('host-btn').addEventListener('click', () => {
-            myRole = roleSelect.value;
             isHost = true;
-            initializePeer();
+            myUsername = 'Moderator';
+            roomId = Math.floor(10000 + Math.random() * 90000).toString();
+            initSessionConnection();
         });
 
         document.getElementById('join-btn').addEventListener('click', () => {
-            const targetId = document.getElementById('join-id-input').value.trim();
-            if (!targetId) return alert("Please enter a valid Room ID.");
-            myRole = roleSelect.value;
+            const codeInput = document.getElementById('join-id-input').value.trim();
+            const nameInput = document.getElementById('join-name-input').value.trim();
+            if (!codeInput || !nameInput) return alert("Please fill out both Room Code and Username fields.");
             isHost = false;
-            initializePeer(targetId);
+            roomId = codeInput;
+            myUsername = nameInput;
+            initSessionConnection();
         });
 
-        function initializePeer(targetHostId = null) {
-            netStatus.textContent = "Connecting to global network...";
-            
-            peer = new Peer({
-                config: {
-                    'iceServers': [
-                        { urls: 'stun:stun.l.google.com:19302' },
-                        { urls: 'stun:stun1.l.google.com:19302' },
-                        { urls: 'stun:stun2.l.google.com:19302' }
-                    ]
-                }
-            });
+        document.getElementById('invite-submit-btn').addEventListener('click', () => {
+            const nameInput = document.getElementById('invite-name-input').value.trim();
+            if (!nameInput) return alert("Please enter your name to connect.");
+            isHost = false;
+            myUsername = nameInput;
+            initSessionConnection();
+        });
 
-            peer.on('open', (id) => {
-                setupScreen.style.display = 'none';
-                roleBadge.textContent = myRole;
-                console.log("PeerJS platform authenticated. ID:", id);
-                
-                if (isHost) {
-                    roomIdDisplay.textContent = id;
-                    setupHostLogic();
-                    updateLocalUI();
-                } else {
-                    roomIdDisplay.textContent = targetHostId;
-                    setupClientLogic(targetHostId);
-                }
-                configureLocalUIInteractivity();
-            });
+        document.getElementById('copy-link-btn').addEventListener('click', () => {
+            const inviteUrl = window.location.origin + window.location.pathname + "?room=" + roomId;
+            navigator.clipboard.writeText(inviteUrl);
+            alert("Invite link copied to clipboard! Share this with speakers.");
+        });
 
-            peer.on('error', (err) => {
-                console.error("PeerJS Critical Error:", err);
-                netStatus.textContent = "Error: " + err.type;
-                netStatus.style.color = "#e63946";
-                if (err.type === 'peer-unavailable') {
-                    alert("Room ID not found! Ensure the host room is open and active.");
-                    location.reload();
-                }
-            });
-        }
-
-        function configureLocalUIInteractivity() {
-            if (myRole === 'Moderator') {
-                modDashboard.style.display = 'flex';
-            }
-            if (myRole === 'Questioner' || myRole === 'Moderator') {
-                document.getElementById('panel-A').classList.add('interactive');
-                document.getElementById('control-hint-A').textContent = "Click to Toggle Your Clock";
-            }
-            if (myRole === 'Respondent' || myRole === 'Moderator') {
-                document.getElementById('panel-B').classList.add('interactive');
-                document.getElementById('control-hint-B').textContent = "Click to Toggle Your Clock";
-            }
-        }
-
-        function handlePanelClick(panelClicked) {
-            if (panelClicked === 'A' && myRole !== 'Questioner' && myRole !== 'Moderator') return;
-            if (panelClicked === 'B' && myRole !== 'Respondent' && myRole !== 'Moderator') return;
+        // --- Infrastructure Orchestrator ---
+        function initSessionConnection() {
+            netStatus.textContent = "Connecting to arena matrix...";
+            setupScreen.style.display = 'none';
+            roleBadge.textContent = myUsername;
+            roomIdDisplay.textContent = roomId;
 
             if (isHost) {
-                toggleClock(panelClicked);
-            } else {
-                if (hostConnection && hostConnection.open) {
-                    hostConnection.send({ type: 'REQUEST_TOGGLE', clock: panelClicked });
-                } else {
-                    alert("Action blocked: Still establishing data channel with Host. Please wait a moment.");
-                }
+                modDashboard.style.display = 'flex';
+                inviteLinkWrapper.style.display = 'block';
             }
+
+            mqttClient = mqtt.connect('wss://broker.hivemq.com:8884/mqtt');
+
+            mqttClient.on('connect', () => {
+                netStatus.textContent = "Connected to Arena!";
+                netStatus.style.color = "#85e3b3";
+
+                if (isHost) {
+                    mqttClient.subscribe(TOPIC_NAMESPACE + roomId + "/commands");
+                    setupMasterTickingLoop();
+                    renderDynamicDashboard();
+                } else {
+                    mqttClient.subscribe(TOPIC_NAMESPACE + roomId + "/state");
+                    mqttClient.publish(TOPIC_NAMESPACE + roomId + "/commands", JSON.stringify({ type: 'REGISTER_SPEAKER', username: myUsername }));
+                }
+            });
+
+            mqttClient.on('message', (topic, payload) => {
+                try {
+                    const data = JSON.parse(payload.toString());
+                    
+                    if (isHost && topic.endsWith("/commands")) {
+                        processIncomingClientCommands(data);
+                    } else if (!isHost && topic.endsWith("/state")) {
+                        state = data;
+                        renderDynamicDashboard();
+                    }
+                } catch (e) {
+                    console.error("Payload breakdown mapping fault:", e);
+                }
+            });
         }
 
-        // --- Host Master Engines ---
-        let masterInterval = null;
-
-        function setupHostLogic() {
-            peer.on('connection', (conn) => {
-                console.log("Host detected connection signal request from peer:", conn.peer);
-
-                // **FIX 1**: Do NOT push or increment UI state until the WebRTC pipeline is truly OPEN.
-                conn.on('open', () => {
-                    console.log("WebRTC Data Channel explicitly OPENED with client:", conn.peer);
-                    clientConnections.push(conn);
-                    updateLocalUI(); 
-
-                    // **FIX 2**: Short 200ms stabilization delay before firing structural payloads
-                    setTimeout(() => {
-                        if (conn.open) {
-                            conn.send({ type: 'STATE_UPDATE', state });
-                        }
-                    }, 200);
-                });
-
-                conn.on('data', (data) => {
-                    console.log("Host received structural packet:", data);
-                    if (data.type === 'REQUEST_TOGGLE') {
-                        toggleClock(data.clock);
-                    } else if (data.type === 'REQUEST_MOD') {
-                        executeModAction(data.action, data.clock, data.amount);
-                    } else if (data.type === 'REQUEST_SYNC') {
-                        conn.send({ type: 'STATE_UPDATE', state });
+        // --- Master Host State Engine ---
+        let hostClockTicker = null;
+        function setupMasterTickingLoop() {
+            if (hostClockTicker) clearInterval(hostClockTicker);
+            
+            hostClockTicker = setInterval(() => {
+                let mutableStateMutation = false;
+                
+                Object.keys(state.speakers).forEach(name => {
+                    if (state.speakers[name].running) {
+                        state.speakers[name].time = Math.max(0, state.speakers[name].time - 1);
+                        if (state.speakers[name].time === 0) state.speakers[name].running = false;
+                        mutableStateMutation = true;
                     }
                 });
 
-                conn.on('close', () => {
-                    console.log("Connection closed by client:", conn.peer);
-                    clientConnections = clientConnections.filter(c => c.peer !== conn.peer);
-                    updateLocalUI();
-                });
-            });
-
-            masterInterval = setInterval(() => {
-                let stateChanged = false;
-                if (state.runningA) {
-                    state.timeA = Math.max(0, state.timeA - 1);
-                    if(state.timeA === 0) state.runningA = false;
-                    stateChanged = true;
-                }
-                if (state.runningB) {
-                    state.timeB = Math.max(0, state.timeB - 1);
-                    if(state.timeB === 0) state.runningB = false;
-                    stateChanged = true;
-                }
-
-                if (stateChanged || state.runningA || state.runningB) {
-                    broadcastState();
-                    updateLocalUI();
+                if (mutableStateMutation) {
+                    dispatchMasterStateBroadcast();
+                    renderDynamicDashboard();
                 }
             }, 1000);
         }
 
-        function toggleClock(clock) {
-            if (clock === 'A') state.runningA = !state.runningA;
-            if (clock === 'B') state.runningB = !state.runningB;
-            broadcastState();
-            updateLocalUI();
-        }
-
-        function sendModCommand(action, clock = null, amount = 0) {
-            if (myRole !== 'Moderator') return;
-            if (isHost) {
-                executeModAction(action, clock, amount);
-            } else {
-                if (hostConnection && hostConnection.open) {
-                    hostConnection.send({ type: 'REQUEST_MOD', action, clock, amount });
-                } else {
-                    alert("Moderator command blocked: Lost connection to host.");
+        function processIncomingClientCommands(cmd) {
+            if (cmd.type === 'REGISTER_SPEAKER') {
+                if (!state.speakers[cmd.username]) {
+                    // Allocates whatever the current structural default time state evaluates to
+                    state.speakers[cmd.username] = { time: state.defaultTime, running: false };
                 }
             }
-        }
-
-        function executeModAction(action, clock, amount) {
-            if (action === 'TOGGLE') {
-                toggleClock(clock);
-                return;
-            } else if (action === 'PAUSE_ALL') {
-                state.runningA = false;
-                state.runningB = false;
-            } else if (action === 'RESET') {
-                state.runningA = false;
-                state.runningB = false;
-                state.timeA = DEFAULT_TIME;
-                state.timeB = DEFAULT_TIME;
-            } else if (action === 'ADJUST') {
-                if (clock === 'A') state.timeA = Math.max(0, state.timeA + amount);
-                if (clock === 'B') state.timeB = Math.max(0, state.timeB + amount);
+            if (cmd.type === 'TOGGLE_CLOCK') {
+                if (state.speakers[cmd.username]) {
+                    state.speakers[cmd.username].running = !state.speakers[cmd.username].running;
+                }
             }
-            broadcastState();
-            updateLocalUI();
+            dispatchMasterStateBroadcast();
+            renderDynamicDashboard();
         }
 
-        function broadcastState() {
-            clientConnections.forEach(conn => {
-                if (conn.open) conn.send({ type: 'STATE_UPDATE', state });
-            });
+        function dispatchMasterStateBroadcast() {
+            if (mqttClient && mqttClient.connected) {
+                mqttClient.publish(TOPIC_NAMESPACE + roomId + "/state", JSON.stringify(state));
+            }
         }
 
-        // --- Client Networking Engine ---
-        function setupClientLogic(targetHostId) {
-            console.log("Client calling peer.connect() target:", targetHostId);
-            netStatus.textContent = "Connecting to Room Host...";
+        // --- Administrative Mod Controls ---
+        function updateGlobalDefaultTime() {
+            if (!isHost) return;
+            const newDefault = parseInt(defaultTimeInput.value);
+            if (!isNaN(newDefault) && newDefault > 0) {
+                state.defaultTime = newDefault;
+                dispatchMasterStateBroadcast();
+                alert(`Default time for future speakers configured to ${newDefault}s.`);
+            }
+        }
+
+        function sendGlobalModAction(action) {
+            if (!isHost) return;
             
-            hostConnection = peer.connect(targetHostId, { reliable: true });
-
-            hostConnection.on('open', () => {
-                console.log("Client reports Data Channel is OPEN to host.");
-                netStatus.textContent = "Connected to Room!";
-                netStatus.style.color = "#85e3b3";
-                
-                // Ask for state explicitly after a minor synchronization buffer
-                setTimeout(() => {
-                    if (hostConnection.open) {
-                        hostConnection.send({ type: 'REQUEST_SYNC' });
-                    }
-                }, 200);
-            });
-
-            hostConnection.on('data', (data) => {
-                if (data.type === 'STATE_UPDATE') {
-                    state = data.state;
-                    netStatus.textContent = "Connected to Room!";
-                    netStatus.style.color = "#85e3b3";
-                    updateLocalUI();
+            Object.keys(state.speakers).forEach(name => {
+                if (action === 'PAUSE_ALL') state.speakers[name].running = false;
+                if (action === 'RESET_ALL') {
+                    state.speakers[name].running = false;
+                    state.speakers[name].time = state.defaultTime; // Drops everyone down to active configured default
                 }
             });
-
-            hostConnection.on('close', () => {
-                console.log("Host severed connection.");
-                netStatus.textContent = "Host left session.";
-                netStatus.style.color = "#e63946";
-            });
+            dispatchMasterStateBroadcast();
+            renderDynamicDashboard();
         }
 
-        // --- UI Refreshes ---
-        function formatTime(seconds) {
+        function executeTargetedModAdjustment(name, action, amount = 0) {
+            if (!isHost) return;
+            
+            if (state.speakers[name]) {
+                if (action === 'TOGGLE') state.speakers[name].running = !state.speakers[name].running;
+                if (action === 'ADJUST') state.speakers[name].time = Math.max(0, state.speakers[name].time + amount);
+                if (action === 'SET_EXACT') state.speakers[name].time = Math.max(0, amount);
+                if (action === 'REMOVE') delete state.speakers[name];
+            }
+            dispatchMasterStateBroadcast();
+            renderDynamicDashboard();
+        }
+
+        // Intercepts input values via a modal window prompt sequence
+        function promptExactTimeChange(speakerName) {
+            if (!isHost) return;
+            const currentSeconds = state.speakers[speakerName].time;
+            
+            const userInput = prompt(`Set exact time for ${speakerName} (in total seconds):`, currentSeconds);
+            if (userInput !== null) {
+                const parsedSeconds = parseInt(userInput);
+                if (!isNaN(parsedSeconds) && parsedSeconds >= 0) {
+                    executeTargetedModAdjustment(speakerName, 'SET_EXACT', parsedSeconds);
+                } else {
+                    alert("Invalid entry. Please use positive integer numbers.");
+                }
+            }
+        }
+
+        // --- Action Pipeline Emitters ---
+        function handlePanelInteraction(targetSpeaker) {
+            if (!isHost && targetSpeaker !== myUsername) return;
+
+            if (isHost) {
+                state.speakers[targetSpeaker].running = !state.speakers[targetSpeaker].running;
+                dispatchMasterStateBroadcast();
+                renderDynamicDashboard();
+            } else {
+                if (mqttClient && mqttClient.connected) {
+                    mqttClient.publish(TOPIC_NAMESPACE + roomId + "/commands", JSON.stringify({ type: 'TOGGLE_CLOCK', username: myUsername }));
+                }
+            }
+        }
+
+        // --- Layout Compilation Engines ---
+        function formatTimeDisplayValue(seconds) {
             const mins = Math.floor(seconds / 60).toString().padStart(2, '0');
             const secs = (seconds % 60).toString().padStart(2, '0');
             return `${mins}:${secs}`;
         }
 
-        function updateLocalUI() {
-            document.getElementById('display-A').textContent = formatTime(state.timeA);
-            document.getElementById('display-B').textContent = formatTime(state.timeB);
+        function renderDynamicDashboard() {
+            const speakerKeys = Object.keys(state.speakers);
+            clockContainer.innerHTML = '';
 
-            document.getElementById('panel-A').classList.toggle('running', state.runningA);
-            document.getElementById('panel-B').classList.toggle('running', state.runningB);
-            
-            if (isHost) { 
-                netStatus.textContent = `Connected Peers: ${clientConnections.length}`;
-                netStatus.style.color = "#85e3b3";
+            // Synergize default input visualization sync block if needed
+            if (isHost && document.activeElement !== defaultTimeInput) {
+                defaultTimeInput.value = state.defaultTime;
+            }
+
+            if (speakerKeys.length === 0) {
+                clockContainer.innerHTML = `<div style="color: var(--text-muted); font-style: italic;">Waiting for speakers to step up...</div>`;
+                return;
+            }
+
+            if (isHost) {
+                speakerKeys.forEach(name => {
+                    const profile = state.speakers[name];
+                    const isRunningClass = profile.running ? 'running' : '';
+                    
+                    const panelHTML = `
+                        <div class="clock-panel ${isRunningClass}">
+                            <div class="speaker-name">${name}</div>
+                            <div class="sub-label">Click to Start/Stop</div>
+                            <div class="time-display interactive" onclick="handlePanelInteraction('${name}')">${formatTimeDisplayValue(profile.time)}</div>
+                            <div class="panel-controls">
+                                <button class="btn btn-sm" onclick="executeTargetedModAdjustment('${name}', 'ADJUST', 15)">+15s</button>
+                                <button class="btn btn-sm" onclick="executeTargetedModAdjustment('${name}', 'ADJUST', -15)">-15s</button>
+                                <button class="btn btn-sm btn-accent" onclick="promptExactTimeChange('${name}')">Set Exact</button>
+                                <button class="btn btn-sm btn-mod" onclick="executeTargetedModAdjustment('${name}', 'REMOVE')" style="margin-left: 5px;">Kick</button>
+                            </div>
+                        </div>
+                    `;
+                    clockContainer.insertAdjacentHTML('beforeend', panelHTML);
+                });
+            } else {
+                if (state.speakers[myUsername]) {
+                    const profile = state.speakers[myUsername];
+                    const isRunningClass = profile.running ? 'running' : '';
+                    
+                    const panelHTML = `
+                        <div class="clock-panel single-view ${isRunningClass} interactive" onclick="handlePanelInteraction('${myUsername}')">
+                            <div class="speaker-name" style="font-size: 3rem;">${myUsername}</div>
+                            <div class="sub-label" style="font-size: 1.2rem;">Tap Anywhere to Start/Stop Your Clock</div>
+                            <div class="time-display">${formatTimeDisplayValue(profile.time)}</div>
+                            <div class="sub-label" style="font-size: 1rem; color: #555;">Status: ${profile.running ? 'YOUR TIME IS TICKING' : 'PAUSED'}</div>
+                        </div>
+                    `;
+                    clockContainer.innerHTML = panelHTML;
+                } else {
+                    clockContainer.innerHTML = `<div style="color: var(--text-muted); font-style: italic;">Registering username profile with Moderator...</div>`;
+                }
             }
         }
 
+        // Global key capture toggle binds
         document.addEventListener('keydown', (e) => {
-            if (e.code === 'Space' && e.target.tagName !== 'INPUT' && e.target.tagName !== 'SELECT') {
+            if (e.code === 'Space' && e.target.tagName !== 'INPUT') {
                 e.preventDefault();
-                if (myRole === 'Moderator') sendModCommand('PAUSE_ALL');
-                else if (myRole === 'Questioner') handlePanelClick('A');
-                else if (myRole === 'Respondent') handlePanelClick('B');
+                if (isHost) {
+                    sendGlobalModAction('PAUSE_ALL');
+                } else {
+                    handlePanelInteraction(myUsername);
+                }
             }
         });
 
