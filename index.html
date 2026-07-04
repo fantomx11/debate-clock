@@ -252,7 +252,7 @@
         const netStatus = document.getElementById('net-status');
         const modDashboard = document.getElementById('mod-dashboard');
 
-        // --- Core Application Initialization Flows ---
+        // --- Entry Points ---
         document.getElementById('host-btn').addEventListener('click', () => {
             myRole = roleSelect.value;
             isHost = true;
@@ -270,7 +270,7 @@
         function initializePeer(targetHostId = null) {
             netStatus.textContent = "Connecting to signaling server...";
             
-            // Configure explicit Google STUN servers for reliable firewall punching
+            // Native global STUN configurations
             peer = new Peer({
                 config: {
                     'iceServers': [
@@ -286,8 +286,8 @@
                 
                 if (isHost) {
                     roomIdDisplay.textContent = id;
-                    netStatus.textContent = "Room Active. Waiting for peers...";
                     setupHostLogic();
+                    updateLocalUI(); // Force instant UI refresh to show 0 peers
                 } else {
                     roomIdDisplay.textContent = targetHostId;
                     netStatus.textContent = "Connecting to Room Host...";
@@ -297,23 +297,19 @@
             });
 
             peer.on('error', (err) => {
-                console.error("Peer Error:", err);
+                console.error("Peer Platform Error:", err);
                 if (err.type === 'peer-unavailable') {
-                    alert("Room ID not found! Double check the Host ID.");
+                    alert("Room ID not found! Please check the host's exact string.");
                     setupScreen.style.display = 'flex';
                     netStatus.textContent = "Disconnected";
-                } else {
-                    alert("Network error: " + err.type);
                 }
             });
         }
 
-        // --- Role Permission & Interactivity Handling ---
         function configureLocalUIInteractivity() {
             if (myRole === 'Moderator') {
                 modDashboard.style.display = 'flex';
             }
-            
             if (myRole === 'Questioner' || myRole === 'Moderator') {
                 document.getElementById('panel-A').classList.add('interactive');
                 document.getElementById('control-hint-A').textContent = "Click to Toggle/Interrupt";
@@ -337,28 +333,30 @@
             }
         }
 
-        // --- Master Host Engine ---
+        // --- Host Master Engines ---
         let masterInterval = null;
 
         function setupHostLogic() {
             peer.on('connection', (conn) => {
                 clientConnections.push(conn);
-                
+                updateLocalUI(); // **FIX**: Update Host UI peer count instantly when client arrives
+
                 conn.on('data', (data) => {
                     if (data.type === 'REQUEST_TOGGLE') {
                         toggleClock(data.clock);
                     } else if (data.type === 'REQUEST_MOD') {
                         executeModAction(data.action, data.clock, data.amount);
+                    } else if (data.type === 'REQUEST_SYNC') {
+                        conn.send({ type: 'STATE_UPDATE', state });
                     }
                 });
 
                 conn.on('close', () => {
                     clientConnections = clientConnections.filter(c => c.peer !== conn.peer);
-                    updateLocalUI();
+                    updateLocalUI(); // **FIX**: Update Host UI peer count instantly on disconnect
                 });
 
-                // **CRUCIAL FIX**: If the WebRTC connection established instantly, 
-                // send the initial sync state immediately instead of waiting for a missed 'open' event.
+                // Dispatch state packet instantly over streaming pipeline
                 if (conn.open) {
                     conn.send({ type: 'STATE_UPDATE', state });
                 } else {
@@ -432,29 +430,31 @@
             });
         }
 
-        // --- Client Engine ---
+        // --- Client Networking Engine ---
         function setupClientLogic(targetHostId) {
-            // **CRUCIAL FIX**: Explicitly use 'json' serialization instead of default 'binary'
-            hostConnection = peer.connect(targetHostId, { 
-                serialization: 'json',
-                reliable: true 
-            });
+            // **FIX**: Dropped custom object options to let native serialization pass cleanly
+            hostConnection = peer.connect(targetHostId);
 
-            const onConnectionEstablished = () => {
+            const setClientConnectedUI = () => {
                 netStatus.textContent = "Connected to Room!";
                 netStatus.style.color = "#85e3b3";
             };
 
-            // **CRUCIAL FIX**: Immediate check if stream channel beat the event assignment loop
             if (hostConnection.open) {
-                onConnectionEstablished();
+                setClientConnectedUI();
+                hostConnection.send({ type: 'REQUEST_SYNC' });
             } else {
-                hostConnection.on('open', onConnectionEstablished);
+                hostConnection.on('open', () => {
+                    setClientConnectedUI();
+                    hostConnection.send({ type: 'REQUEST_SYNC' });
+                });
             }
 
             hostConnection.on('data', (data) => {
                 if (data.type === 'STATE_UPDATE') {
                     state = data.state;
+                    // **FIX**: Bulletproof UI verification check fallback
+                    setClientConnectedUI();
                     updateLocalUI();
                 }
             });
@@ -463,13 +463,9 @@
                 netStatus.textContent = "Host left session.";
                 netStatus.style.color = "#e63946";
             });
-            
-            hostConnection.on('error', (err) => {
-                console.error("Data channel error:", err);
-            });
         }
 
-        // --- Presentation UI Layers ---
+        // --- UI Paint Engines ---
         function formatTime(seconds) {
             const mins = Math.floor(seconds / 60).toString().padStart(2, '0');
             const secs = (seconds % 60).toString().padStart(2, '0');
