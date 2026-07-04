@@ -481,7 +481,7 @@
             document.getElementById('panel-A').classList.toggle('running', state.runningA);
             document.getElementById('panel-B').classList.toggle('running', state.runningB);
             
-            if (isHost) {
+            if (isHost) { 
                 netStatus.textContent = `Connected Peers: ${clientConnections.length}`;
                 netStatus.style.color = "#85e3b3";
             }
