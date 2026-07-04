@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dynamic Debate Chess Clock</title>
+    <title>Cross Exam Clock</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/5.14.1/mqtt.min.js"></script>
     <style>
         :root {
@@ -170,6 +170,59 @@
             justify-content: center;
         }
 
+        /* --- Custom Toast Notification Architecture --- */
+        #toast-container {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 2000;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .toast {
+            background: #222222;
+            color: var(--text-color);
+            padding: 12px 20px;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            min-width: 240px;
+            max-width: 360px;
+            box-shadow: 0 8px 16px rgba(0,0,0,0.5);
+            border-left: 4px solid var(--accent-active);
+            display: flex;
+            align-items: center;
+            animation: toastSlideIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+        }
+
+        .toast.success { border-left-color: #85e3b3; }
+        .toast.error { border-left-color: var(--mod-color); }
+        .toast.info { border-left-color: var(--accent-active); }
+
+        @keyframes toastSlideIn {
+            from { transform: translateX(120%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+
+        @keyframes toastSlideOut {
+            from { transform: translateX(0); opacity: 1; }
+            to { transform: translateX(120%); opacity: 0; }
+        }
+
+        /* --- Custom Overlay Modal Architecture --- */
+        #custom-modal-overlay {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 1500;
+            display: none;
+            justify-content: center;
+            align-items: center;
+            backdrop-filter: blur(3px);
+        }
+
         /* Generic Utilities */
         .btn {
             background-color: #333;
@@ -207,6 +260,26 @@
     </style>
 </head>
 <body>
+
+    <!-- TOAST TARGET WIREFRAME MOUNT CONTAINER -->
+    <div id="toast-container"></div>
+
+    <!-- INTEGRATED MODAL OVERRIDE DIALOG -->
+    <div id="custom-modal-overlay">
+        <div class="setup-card" style="max-width: 340px;">
+            <h3 id="modal-title" style="margin-top: 0; color: var(--accent-active);">Set Exact Time</h3>
+            <p id="modal-subtitle" style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 15px;">Target Speaker: None</p>
+            <div style="display: flex; justify-content: center; align-items: center; gap: 5px; margin-bottom: 20px;">
+                <input type="number" id="modal-input-mins" placeholder="MM" min="0" max="99" style="width: 60px; text-align: center; font-size: 1.2rem; font-weight: bold;">
+                <span style="font-size: 1.5rem; font-weight: bold;">:</span>
+                <input type="number" id="modal-input-secs" placeholder="SS" min="0" max="59" style="width: 60px; text-align: center; font-size: 1.2rem; font-weight: bold;">
+            </div>
+            <div style="display: flex; gap: 10px; justify-content: center;">
+                <button class="btn btn-accent" id="modal-submit-btn">Apply Override</button>
+                <button class="btn" onclick="closeExactTimeModal()">Cancel</button>
+            </div>
+        </div>
+    </div>
 
     <!-- 1. SETUP SCREEN -->
     <div id="setup-screen">
@@ -268,10 +341,10 @@
         let roomId = '';
         let myUsername = ''; 
         let mqttClient = null;
+        let activeModalTargetSpeaker = null; // Track modal state target
 
-        // Shared architectural state schema
         let state = {
-            defaultTime: 180, // Tracked dynamically by host
+            defaultTime: 180, 
             speakers: {} 
         };
 
@@ -286,6 +359,13 @@
         const clockContainer = document.getElementById('clock-container');
         const inviteLinkWrapper = document.getElementById('invite-link-wrapper');
         const defaultTimeInput = document.getElementById('default-time-input');
+        
+        // Modal Handles
+        const modalOverlay = document.getElementById('custom-modal-overlay');
+        const modalSubtitle = document.getElementById('modal-subtitle');
+        const modalMinsInput = document.getElementById('modal-input-mins');
+        const modalSecsInput = document.getElementById('modal-input-secs');
+        const modalSubmitBtn = document.getElementById('modal-submit-btn');
 
         // --- URL Parameter Interceptor Scan ---
         const urlParams = new URLSearchParams(window.location.search);
@@ -299,6 +379,20 @@
             standardSetup.style.display = 'block';
         }
 
+        // --- Custom Toast Dispatcher Engine ---
+        function triggerToast(message, type = 'info') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.textContent = message;
+            container.appendChild(toast);
+            
+            setTimeout(() => {
+                toast.style.animation = 'toastSlideOut 0.3s ease forwards';
+                toast.addEventListener('animationend', () => toast.remove());
+            }, 3500);
+        }
+
         // --- Event Listeners UI Bindings ---
         document.getElementById('host-btn').addEventListener('click', () => {
             isHost = true;
@@ -310,7 +404,7 @@
         document.getElementById('join-btn').addEventListener('click', () => {
             const codeInput = document.getElementById('join-id-input').value.trim();
             const nameInput = document.getElementById('join-name-input').value.trim();
-            if (!codeInput || !nameInput) return alert("Please fill out both Room Code and Username fields.");
+            if (!codeInput || !nameInput) return triggerToast("Please complete all setup fields.", "error");
             isHost = false;
             roomId = codeInput;
             myUsername = nameInput;
@@ -319,7 +413,7 @@
 
         document.getElementById('invite-submit-btn').addEventListener('click', () => {
             const nameInput = document.getElementById('invite-name-input').value.trim();
-            if (!nameInput) return alert("Please enter your name to connect.");
+            if (!nameInput) return triggerToast("Name entry is required to connect.", "error");
             isHost = false;
             myUsername = nameInput;
             initSessionConnection();
@@ -328,7 +422,7 @@
         document.getElementById('copy-link-btn').addEventListener('click', () => {
             const inviteUrl = window.location.origin + window.location.pathname + "?room=" + roomId;
             navigator.clipboard.writeText(inviteUrl);
-            alert("Invite link copied to clipboard! Share this with speakers.");
+            triggerToast("Invite link copied to clipboard!", "success");
         });
 
         // --- Infrastructure Orchestrator ---
@@ -348,6 +442,7 @@
             mqttClient.on('connect', () => {
                 netStatus.textContent = "Connected to Arena!";
                 netStatus.style.color = "#85e3b3";
+                triggerToast("Secure cloud bridge channel active.", "success");
 
                 if (isHost) {
                     mqttClient.subscribe(TOPIC_NAMESPACE + roomId + "/commands");
@@ -401,8 +496,8 @@
         function processIncomingClientCommands(cmd) {
             if (cmd.type === 'REGISTER_SPEAKER') {
                 if (!state.speakers[cmd.username]) {
-                    // Allocates whatever the current structural default time state evaluates to
                     state.speakers[cmd.username] = { time: state.defaultTime, running: false };
+                    triggerToast(`Speaker connected: "${cmd.username}"`, "info");
                 }
             }
             if (cmd.type === 'TOGGLE_CLOCK') {
@@ -427,7 +522,7 @@
             if (!isNaN(newDefault) && newDefault > 0) {
                 state.defaultTime = newDefault;
                 dispatchMasterStateBroadcast();
-                alert(`Default time for future speakers configured to ${newDefault}s.`);
+                triggerToast(`Default time adjusted to ${newDefault}s.`, "success");
             }
         }
 
@@ -438,11 +533,12 @@
                 if (action === 'PAUSE_ALL') state.speakers[name].running = false;
                 if (action === 'RESET_ALL') {
                     state.speakers[name].running = false;
-                    state.speakers[name].time = state.defaultTime; // Drops everyone down to active configured default
+                    state.speakers[name].time = state.defaultTime; 
                 }
             });
             dispatchMasterStateBroadcast();
             renderDynamicDashboard();
+            triggerToast(action === 'PAUSE_ALL' ? "All clocks paused." : "All clocks reset to default.", "info");
         }
 
         function executeTargetedModAdjustment(name, action, amount = 0) {
@@ -452,27 +548,52 @@
                 if (action === 'TOGGLE') state.speakers[name].running = !state.speakers[name].running;
                 if (action === 'ADJUST') state.speakers[name].time = Math.max(0, state.speakers[name].time + amount);
                 if (action === 'SET_EXACT') state.speakers[name].time = Math.max(0, amount);
-                if (action === 'REMOVE') delete state.speakers[name];
+                if (action === 'REMOVE') {
+                    delete state.speakers[name];
+                    triggerToast(`Speaker "${name}" kicked.`, "info");
+                }
             }
             dispatchMasterStateBroadcast();
             renderDynamicDashboard();
         }
 
-        // Intercepts input values via a modal window prompt sequence
-        function promptExactTimeChange(speakerName) {
+        // --- Custom Overlay Modal Engine Controllers ---
+        function openExactTimeModal(speakerName) {
             if (!isHost) return;
-            const currentSeconds = state.speakers[speakerName].time;
+            activeModalTargetSpeaker = speakerName;
             
-            const userInput = prompt(`Set exact time for ${speakerName} (in total seconds):`, currentSeconds);
-            if (userInput !== null) {
-                const parsedSeconds = parseInt(userInput);
-                if (!isNaN(parsedSeconds) && parsedSeconds >= 0) {
-                    executeTargetedModAdjustment(speakerName, 'SET_EXACT', parsedSeconds);
-                } else {
-                    alert("Invalid entry. Please use positive integer numbers.");
-                }
-            }
+            const totalSeconds = state.speakers[speakerName].time;
+            const displayMins = Math.floor(totalSeconds / 60);
+            const displaySecs = totalSeconds % 60;
+
+            modalSubtitle.textContent = `Target Speaker: ${speakerName}`;
+            modalMinsInput.value = displayMins;
+            modalSecsInput.value = displaySecs;
+            modalOverlay.style.display = 'flex';
+            modalMinsInput.focus();
         }
+
+        function closeExactTimeModal() {
+            modalOverlay.style.display = 'none';
+            activeModalTargetSpeaker = null;
+        }
+
+        modalSubmitBtn.addEventListener('click', () => {
+            if (!isHost || !activeModalTargetSpeaker) return;
+
+            const mins = parseInt(modalMinsInput.value) || 0;
+            const secs = parseInt(modalSecsInput.value) || 0;
+
+            if (mins < 0 || secs < 0 || secs > 59) {
+                triggerToast("Invalid metrics. Seconds must fall within 0-59.", "error");
+                return;
+            }
+
+            const calculatedTotalSeconds = (mins * 60) + secs;
+            executeTargetedModAdjustment(activeModalTargetSpeaker, 'SET_EXACT', calculatedTotalSeconds);
+            triggerToast(`Overwrote time index for ${activeModalTargetSpeaker}.`, "success");
+            closeExactTimeModal();
+        });
 
         // --- Action Pipeline Emitters ---
         function handlePanelInteraction(targetSpeaker) {
@@ -500,7 +621,6 @@
             const speakerKeys = Object.keys(state.speakers);
             clockContainer.innerHTML = '';
 
-            // Synergize default input visualization sync block if needed
             if (isHost && document.activeElement !== defaultTimeInput) {
                 defaultTimeInput.value = state.defaultTime;
             }
@@ -523,7 +643,7 @@
                             <div class="panel-controls">
                                 <button class="btn btn-sm" onclick="executeTargetedModAdjustment('${name}', 'ADJUST', 15)">+15s</button>
                                 <button class="btn btn-sm" onclick="executeTargetedModAdjustment('${name}', 'ADJUST', -15)">-15s</button>
-                                <button class="btn btn-sm btn-accent" onclick="promptExactTimeChange('${name}')">Set Exact</button>
+                                <button class="btn btn-sm btn-accent" onclick="openExactTimeModal('${name}')">Set Exact</button>
                                 <button class="btn btn-sm btn-mod" onclick="executeTargetedModAdjustment('${name}', 'REMOVE')" style="margin-left: 5px;">Kick</button>
                             </div>
                         </div>
@@ -562,7 +682,8 @@
             }
         });
 
-        updateLocalUI();
+        // Initialize empty state viewport display layers safely
+        renderDynamicDashboard();
     </script>
 </body>
 </html>
