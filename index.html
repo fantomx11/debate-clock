@@ -126,6 +126,7 @@
             cursor: pointer;
             transition: all 0.2s ease;
             position: relative;
+            user-select: none;
         }
         .compact-clock-card:hover { background: #1b1b1b; }
         .compact-clock-card.running { background-color: #16262e; }
@@ -377,7 +378,7 @@
         let mqttClient = null;
         let activeModalTargetClockId = null; 
         
-        // Multi-select and decoupled assignments management
+        // Selection arrays framework tracking parameters
         let selectedClockIds = []; 
         let selectedSpeakerName = null; 
         let draggedRole = null; 
@@ -538,7 +539,7 @@
                 if (!state.speakers.includes(cmd.username)) {
                     state.speakers.push(cmd.username);
                     
-                    // Auto-provision standard clock for the incoming speaker
+                    // Auto-provision standard clock for incoming speaker
                     const clockId = 'clk_' + Math.random().toString(36).substr(2, 9);
                     state.clocks[clockId] = {
                         id: clockId,
@@ -612,23 +613,29 @@
             triggerToast(`Clock "${name}" created (Hidden by default).`, "success");
         }
 
-        // Multi-select and decoupled cross selection logic engines
-        function toggleClockSelection(clockId) {
+        // Refactored conditional selection event controller engine
+        function handleClockClick(e, clockId) {
             if (!isHost) return;
-            selectedSpeakerName = null; // Shift focus strictly to clocks logic updates
+            selectedSpeakerName = null; 
             
-            const idx = selectedClockIds.indexOf(clockId);
-            if (idx > -1) {
-                selectedClockIds.splice(idx, 1);
+            if (e.ctrlKey || e.metaKey) {
+                // Ctrl+Click: Toggle selection index tracking
+                const idx = selectedClockIds.indexOf(clockId);
+                if (idx > -1) {
+                    selectedClockIds.splice(idx, 1);
+                } else {
+                    selectedClockIds.push(clockId);
+                }
             } else {
-                selectedClockIds.push(clockId);
+                // Plain Click: Reset selection to target item exclusively
+                selectedClockIds = [clockId];
             }
             renderDynamicDashboard();
         }
 
         function toggleSpeakerSelection(speakerName) {
             if (!isHost) return;
-            selectedClockIds = []; // Shift focus strictly to individual speaker logic updates
+            selectedClockIds = []; 
             selectedSpeakerName = (selectedSpeakerName === speakerName) ? null : speakerName;
             renderDynamicDashboard();
         }
@@ -683,6 +690,23 @@
             modalMinsInput.focus();
         }
 
+        // Multi-clock target initialization
+        function openBulkExactTimeModal() {
+            if (!isHost || selectedClockIds.length === 0) return;
+            activeModalTargetClockId = 'BULK';
+            
+            const firstClk = state.clocks[selectedClockIds[0]];
+            const totalSeconds = firstClk ? firstClk.time : state.defaultTime;
+            const displayMins = Math.floor(totalSeconds / 60);
+            const displaySecs = totalSeconds % 60;
+
+            modalSubtitle.textContent = `Target: All (${selectedClockIds.length}) Selected Clocks`;
+            modalMinsInput.value = displayMins;
+            modalSecsInput.value = displaySecs;
+            modalOverlay.style.display = 'flex';
+            modalMinsInput.focus();
+        }
+
         function closeExactTimeModal() {
             modalOverlay.style.display = 'none';
             activeModalTargetClockId = null;
@@ -700,8 +724,22 @@
             }
 
             const calculatedTotalSeconds = (mins * 60) + secs;
-            executeClockAction(activeModalTargetClockId, 'SET_EXACT', calculatedTotalSeconds);
-            triggerToast(`Overwrote time indexing configurations.`, "success");
+            
+            if (activeModalTargetClockId === 'BULK') {
+                // Overwrite all items matching multi-selection tracking logs
+                selectedClockIds.forEach(id => {
+                    if (state.clocks[id]) {
+                        state.clocks[id].time = Math.max(0, calculatedTotalSeconds);
+                    }
+                });
+                triggerToast(`Overwrote time index tracking across ${selectedClockIds.length} clocks.`, "success");
+            } else {
+                executeClockAction(activeModalTargetClockId, 'SET_EXACT', calculatedTotalSeconds);
+                triggerToast(`Overwrote time indexing configurations.`, "success");
+            }
+            
+            dispatchMasterStateBroadcast();
+            renderDynamicDashboard();
             closeExactTimeModal();
         });
 
@@ -797,7 +835,6 @@
                 let clocksHTML = clocksList.map(clk => {
                     const isSelected = selectedClockIds.includes(clk.id);
                     
-                    // Standard visual borders optimization framework rules
                     let borderStyles = 'border: 1px solid var(--border-color);';
                     if (selectedSpeakerName) {
                         const role = clk.speakerAccess ? clk.speakerAccess[selectedSpeakerName] : 'hidden';
@@ -811,7 +848,7 @@
                     return `
                         <div class="compact-clock-card ${clk.running ? 'running' : ''}" 
                              style="${borderStyles} ${selectShadow}" 
-                             onclick="toggleClockSelection('${clk.id}')"
+                             onclick="handleClockClick(event, '${clk.id}')"
                              ondragover="event.preventDefault()"
                              ondrop="handleRoleDropOnClock(event, '${clk.id}')">
                             <div style="display: flex; justify-content: space-between; width: 100%; align-items: center;">
@@ -836,7 +873,7 @@
                     clocksHTML = `<div style="color: var(--text-muted); font-style: italic; padding: 20px; text-align: center;">No clocks created yet. Click "+ Add Clock" to begin.</div>`;
                 }
 
-                // Inject dynamic multi-selection actions bar workspace context
+                // Inject bulk selection overrides configuration dashboard tools panel
                 let bulkActionsHTML = '';
                 if (selectedClockIds.length > 0) {
                     bulkActionsHTML = `
@@ -845,6 +882,7 @@
                             <div style="display: flex; gap: 6px;">
                                 <button class="btn btn-sm btn-accent" onclick="executeBulkClockAction('START')">▶ Start All</button>
                                 <button class="btn btn-sm" onclick="executeBulkClockAction('PAUSE')">⏸ Pause All</button>
+                                <button class="btn btn-sm btn-accent" onclick="openBulkExactTimeModal()">⏱️ Set Time</button>
                                 <button class="btn btn-sm btn-mod" onclick="executeBulkClockAction('DELETE')">🗑️ Delete</button>
                                 <button class="btn btn-sm" style="background:#444;" onclick="selectedClockIds=[]; renderDynamicDashboard();">Deselect</button>
                             </div>
@@ -884,7 +922,6 @@
 
                 let speakersHTML = state.speakers.map(name => {
                     let role = 'hidden';
-                    // Display roles contextual validation for active components settings
                     if (selectedClockIds.length === 1) {
                         const targetId = selectedClockIds[0];
                         role = (state.clocks[targetId] && state.clocks[targetId].speakerAccess) ? (state.clocks[targetId].speakerAccess[name] || 'hidden') : 'hidden';
