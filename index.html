@@ -114,6 +114,28 @@
             transition: box-shadow 0.2s ease, border-color 0.2s ease;
         }
 
+        /* Standard Compact Host Card Layout */
+        .compact-clock-card {
+            background: #151515;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 10px 15px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            position: relative;
+        }
+        .compact-clock-card:hover { background: #1b1b1b; }
+        .compact-clock-card.running { background-color: #16262e; }
+        .compact-clock-card .time-display {
+            font-size: 2.2rem;
+            font-family: monospace;
+            font-weight: 700;
+            margin: 0;
+        }
+
         .clock-panel.single-view {
             max-width: 600px;
             width: 80%;
@@ -128,9 +150,6 @@
         .interactive:hover { background: #1c1c1c; }
         .interactive:active { transform: scale(0.99); }
 
-        .clock-panel.running {
-            background-color: #16262e;
-        }
         .clock-panel.running .time-display {
             color: var(--accent-active);
             text-shadow: 0 0 15px rgba(0,173,181,0.4);
@@ -164,10 +183,8 @@
         .panel-controls {
             display: flex;
             flex-wrap: wrap;
-            gap: 5px;
-            margin-top: 15px;
+            gap: 4px;
             width: 100%;
-            justify-content: center;
         }
 
         /* --- Custom Drag and Drop Architecture Styles --- */
@@ -359,7 +376,9 @@
         let myUsername = ''; 
         let mqttClient = null;
         let activeModalTargetClockId = null; 
-        let selectedClockId = null; 
+        
+        // Multi-select and decoupled assignments management
+        let selectedClockIds = []; 
         let selectedSpeakerName = null; 
         let draggedRole = null; 
 
@@ -519,7 +538,7 @@
                 if (!state.speakers.includes(cmd.username)) {
                     state.speakers.push(cmd.username);
                     
-                    // Auto-provision clock for the incoming speaker
+                    // Auto-provision standard clock for the incoming speaker
                     const clockId = 'clk_' + Math.random().toString(36).substr(2, 9);
                     state.clocks[clockId] = {
                         id: clockId,
@@ -593,16 +612,41 @@
             triggerToast(`Clock "${name}" created (Hidden by default).`, "success");
         }
 
-        function selectClock(clockId) {
+        // Multi-select and decoupled cross selection logic engines
+        function toggleClockSelection(clockId) {
             if (!isHost) return;
-            selectedClockId = (selectedClockId === clockId) ? null : clockId;
+            selectedSpeakerName = null; // Shift focus strictly to clocks logic updates
+            
+            const idx = selectedClockIds.indexOf(clockId);
+            if (idx > -1) {
+                selectedClockIds.splice(idx, 1);
+            } else {
+                selectedClockIds.push(clockId);
+            }
             renderDynamicDashboard();
         }
 
-        function selectSpeaker(speakerName) {
+        function toggleSpeakerSelection(speakerName) {
             if (!isHost) return;
+            selectedClockIds = []; // Shift focus strictly to individual speaker logic updates
             selectedSpeakerName = (selectedSpeakerName === speakerName) ? null : speakerName;
             renderDynamicDashboard();
+        }
+
+        function executeBulkClockAction(action) {
+            if (!isHost || selectedClockIds.length === 0) return;
+            
+            selectedClockIds.forEach(id => {
+                if (state.clocks[id]) {
+                    if (action === 'START') state.clocks[id].running = true;
+                    if (action === 'PAUSE') state.clocks[id].running = false;
+                    if (action === 'DELETE') delete state.clocks[id];
+                }
+            });
+            if (action === 'DELETE') selectedClockIds = [];
+            dispatchMasterStateBroadcast();
+            renderDynamicDashboard();
+            triggerToast(`Executed bulk ${action} action across selected clocks.`, "info");
         }
 
         function executeClockAction(id, action, amount = 0) {
@@ -614,7 +658,7 @@
                 if (action === 'SET_EXACT') state.clocks[id].time = Math.max(0, amount);
                 if (action === 'REMOVE') {
                     delete state.clocks[id];
-                    if (selectedClockId === id) selectedClockId = null;
+                    selectedClockIds = selectedClockIds.filter(cId => cId !== id);
                     triggerToast("Clock deleted.", "info");
                 }
             }
@@ -670,16 +714,19 @@
         function handleRoleDropOnSpeaker(e, username) {
             e.preventDefault();
             const role = e.dataTransfer.getData("text/plain") || draggedRole;
-            if (!selectedClockId || !role) return;
+            if (selectedClockIds.length === 0 || !role) return;
 
-            if (!state.clocks[selectedClockId].speakerAccess) {
-                state.clocks[selectedClockId].speakerAccess = {};
-            }
+            // Iterate and batch assign access settings across all chosen multi-clocks indices
+            selectedClockIds.forEach(clockId => {
+                if (state.clocks[clockId]) {
+                    if (!state.clocks[clockId].speakerAccess) state.clocks[clockId].speakerAccess = {};
+                    state.clocks[clockId].speakerAccess[username] = role;
+                }
+            });
             
-            state.clocks[selectedClockId].speakerAccess[username] = role;
             dispatchMasterStateBroadcast();
             renderDynamicDashboard();
-            triggerToast(`Assigned ${username} -> ${role.toUpperCase()}`, "success");
+            triggerToast(`Assigned ${username} -> ${role.toUpperCase()} on ${selectedClockIds.length} clocks.`, "success");
         }
 
         function handleRoleDropOnClock(e, clockId) {
@@ -748,9 +795,9 @@
                 const clocksList = Object.values(state.clocks);
                 
                 let clocksHTML = clocksList.map(clk => {
-                    const isSelected = clk.id === selectedClockId;
+                    const isSelected = selectedClockIds.includes(clk.id);
                     
-                    // Highlight border color context based on selected speaker's role
+                    // Standard visual borders optimization framework rules
                     let borderStyles = 'border: 1px solid var(--border-color);';
                     if (selectedSpeakerName) {
                         const role = clk.speakerAccess ? clk.speakerAccess[selectedSpeakerName] : 'hidden';
@@ -759,25 +806,27 @@
                         else borderStyles = 'border: 2px dashed #e63946;';
                     }
 
-                    const selectShadow = isSelected ? 'box-shadow: 0 0 0 2px var(--accent-active); background: #1a272c;' : 'background: #151515;';
+                    const selectShadow = isSelected ? 'box-shadow: 0 0 0 2px var(--accent-active); background: #1a272c;' : '';
                     
                     return `
-                        <div class="clock-panel ${clk.running ? 'running' : ''}" 
-                             style="${borderStyles} ${selectShadow} max-width: none; min-width: 0; cursor: pointer; width: auto;" 
-                             onclick="selectClock('${clk.id}')"
+                        <div class="compact-clock-card ${clk.running ? 'running' : ''}" 
+                             style="${borderStyles} ${selectShadow}" 
+                             onclick="toggleClockSelection('${clk.id}')"
                              ondragover="event.preventDefault()"
                              ondrop="handleRoleDropOnClock(event, '${clk.id}')">
                             <div style="display: flex; justify-content: space-between; width: 100%; align-items: center;">
-                                <strong style="font-size: 1.2rem; color:#fff;">${clk.name}</strong>
-                                ${clk.running ? '<span class="badge" style="background: var(--accent-active)">RUNNING</span>' : '<span class="badge">PAUSED</span>'}
+                                <strong style="font-size: 1.05rem; color:#fff; text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">${clk.name}</strong>
+                                ${clk.running ? '<span class="badge" style="background: var(--accent-active); padding: 2px 6px; font-size:0.7rem;">RUN</span>' : '<span class="badge" style="padding: 2px 6px; font-size:0.7rem;">PAUSE</span>'}
                             </div>
-                            <div class="time-display" style="font-size: 3.5rem; margin: 5px 0;">${formatTimeDisplayValue(clk.time)}</div>
-                            <div class="panel-controls" onclick="event.stopPropagation()">
-                                <button class="btn btn-sm" onclick="handleClientClockToggle('${clk.id}')">${clk.running ? 'Pause' : 'Start'}</button>
-                                <button class="btn btn-sm" onclick="executeClockAction('${clk.id}', 'ADJUST', 15)">+15s</button>
-                                <button class="btn btn-sm" onclick="executeClockAction('${clk.id}', 'ADJUST', -15)">-15s</button>
-                                <button class="btn btn-sm btn-accent" onclick="openExactTimeModal('${clk.id}')">Set Exact</button>
-                                <button class="btn btn-sm btn-mod" onclick="executeClockAction('${clk.id}', 'REMOVE')">Delete</button>
+                            <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px;">
+                                <div class="time-display">${formatTimeDisplayValue(clk.time)}</div>
+                                <div class="panel-controls" onclick="event.stopPropagation()" style="justify-content: flex-end; flex: 1;">
+                                    <button class="btn btn-sm" style="padding: 3px 6px;" onclick="handleClientClockToggle('${clk.id}')">${clk.running ? '⏸' : '▶'}</button>
+                                    <button class="btn btn-sm" style="padding: 3px 6px;" onclick="executeClockAction('${clk.id}', 'ADJUST', 15)">+15</button>
+                                    <button class="btn btn-sm" style="padding: 3px 6px;" onclick="executeClockAction('${clk.id}', 'ADJUST', -15)">-15</button>
+                                    <button class="btn btn-sm btn-accent" style="padding: 3px 6px; font-size: 0.75rem;" onclick="openExactTimeModal('${clk.id}')">Set</button>
+                                    <button class="btn btn-sm btn-mod" style="padding: 3px 6px; font-size: 0.75rem;" onclick="executeClockAction('${clk.id}', 'REMOVE')">❌</button>
+                                </div>
                             </div>
                         </div>
                     `;
@@ -787,13 +836,28 @@
                     clocksHTML = `<div style="color: var(--text-muted); font-style: italic; padding: 20px; text-align: center;">No clocks created yet. Click "+ Add Clock" to begin.</div>`;
                 }
 
+                // Inject dynamic multi-selection actions bar workspace context
+                let bulkActionsHTML = '';
+                if (selectedClockIds.length > 0) {
+                    bulkActionsHTML = `
+                        <div style="background: #1e292d; padding: 8px 12px; border-radius: 6px; border: 1px solid var(--accent-active); display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                            <span style="font-size: 0.85rem; font-weight: bold; color: var(--accent-active);">Selected: ${selectedClockIds.length} Clock(s)</span>
+                            <div style="display: flex; gap: 6px;">
+                                <button class="btn btn-sm btn-accent" onclick="executeBulkClockAction('START')">▶ Start All</button>
+                                <button class="btn btn-sm" onclick="executeBulkClockAction('PAUSE')">⏸ Pause All</button>
+                                <button class="btn btn-sm btn-mod" onclick="executeBulkClockAction('DELETE')">🗑️ Delete</button>
+                                <button class="btn btn-sm" style="background:#444;" onclick="selectedClockIds=[]; renderDynamicDashboard();">Deselect</button>
+                            </div>
+                        </div>
+                    `;
+                }
+
                 // Compile Role Drag Assignment Architecture Zones
-                let roleZoneHTML = `<div style="font-size: 0.85rem; color: var(--text-muted); text-align: center; padding: 5px;">Select a clock or speaker to deploy role adjustments.</div>`;
-                if (selectedClockId && state.clocks[selectedClockId]) {
-                    const selectedClock = state.clocks[selectedClockId];
+                let roleZoneHTML = `<div style="font-size: 0.85rem; color: var(--text-muted); text-align: center; padding: 5px;">Select clock(s) or a speaker to map active access permissions.</div>`;
+                if (selectedClockIds.length > 0) {
                     roleZoneHTML = `
                         <div style="background: #222; padding: 10px; border-radius: 6px; border: 1px solid #333; text-align: center;">
-                            <div style="font-size: 0.8rem; margin-bottom: 8px; color: var(--text-muted);">Drag role onto speaker for <strong>${selectedClock.name}</strong>:</div>
+                            <div style="font-size: 0.8rem; margin-bottom: 8px; color: var(--text-muted);">Drag role onto speaker for <strong>(${selectedClockIds.length}) Selected Clocks</strong>:</div>
                             <div style="display: flex; justify-content: center; gap: 8px;">
                                 <div class="role-icon role-hidden" draggable="true" ondragstart="handleRoleDragStart(event, 'hidden')">🚫 Hidden</div>
                                 <div class="role-icon role-visible" draggable="true" ondragstart="handleRoleDragStart(event, 'visible')">👁️ Visible</div>
@@ -820,15 +884,21 @@
 
                 let speakersHTML = state.speakers.map(name => {
                     let role = 'hidden';
-                    if (selectedClockId && state.clocks[selectedClockId] && state.clocks[selectedClockId].speakerAccess) {
-                        role = state.clocks[selectedClockId].speakerAccess[name] || 'hidden';
+                    // Display roles contextual validation for active components settings
+                    if (selectedClockIds.length === 1) {
+                        const targetId = selectedClockIds[0];
+                        role = (state.clocks[targetId] && state.clocks[targetId].speakerAccess) ? (state.clocks[targetId].speakerAccess[name] || 'hidden') : 'hidden';
                     }
 
                     let borderStyles = 'border: 2px solid transparent;';
-                    if (selectedClockId) {
-                        if (role === 'controllable') borderStyles = 'border: 2px solid #85e3b3;';
-                        else if (role === 'visible') borderStyles = 'border: 2px solid #00adb5;';
-                        else borderStyles = 'border: 2px dashed #e63946;';
+                    if (selectedClockIds.length > 0) {
+                        if (selectedClockIds.length === 1) {
+                            if (role === 'controllable') borderStyles = 'border: 2px solid #85e3b3;';
+                            else if (role === 'visible') borderStyles = 'border: 2px solid #00adb5;';
+                            else borderStyles = 'border: 2px dashed #e63946;';
+                        } else {
+                            borderStyles = 'border: 2px solid var(--accent-active);';
+                        }
                     }
 
                     const isSpeakerSelected = name === selectedSpeakerName;
@@ -837,12 +907,12 @@
                     return `
                         <div class="speaker-card" 
                              style="${borderStyles} ${selectionShadow}" 
-                             onclick="selectSpeaker('${name}')"
+                             onclick="toggleSpeakerSelection('${name}')"
                              ondragover="event.preventDefault()" 
                              ondrop="handleRoleDropOnSpeaker(event, '${name}')">
                             <div style="display: flex; justify-content: space-between; align-items: center;">
                                 <span>👤 ${name}</span>
-                                ${selectedClockId ? `<span style="font-size: 0.75rem; font-weight: bold; text-transform: uppercase; padding: 2px 6px; border-radius:3px; background:#111;">${role}</span>` : ''}
+                                ${selectedClockIds.length === 1 ? `<span style="font-size: 0.75rem; font-weight: bold; text-transform: uppercase; padding: 2px 6px; border-radius:3px; background:#111;">${role}</span>` : ''}
                             </div>
                         </div>
                     `;
@@ -854,12 +924,15 @@
 
                 clockContainer.innerHTML = `
                     <div style="display: flex; width: 100%; gap: 20px; overflow: hidden; height: 100%;">
-                        <div style="flex: 2; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; padding-right: 5px;">
-                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div style="flex: 2; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding-right: 5px;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
                                 <h3 style="margin: 0; color: var(--accent-active);">Managed Clocks</h3>
                                 <button class="btn btn-sm btn-accent" onclick="addNewClockPrompt()">+ Add Clock</button>
                             </div>
-                            ${clocksHTML}
+                            ${bulkActionsHTML}
+                            <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; align-content: start;">
+                                ${clocksHTML}
+                            </div>
                         </div>
                         
                         <div style="flex: 1; background: #181818; padding: 15px; border-radius: 8px; border: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 15px; overflow-y: auto;">
@@ -914,7 +987,11 @@
             if (e.code === 'Space' && e.target.tagName !== 'INPUT') {
                 e.preventDefault();
                 if (isHost) {
-                    sendGlobalModAction('PAUSE_ALL');
+                    if (selectedClockIds.length > 0) {
+                        executeBulkClockAction('PAUSE');
+                    } else {
+                        sendGlobalModAction('PAUSE_ALL');
+                    }
                 } else {
                     const firstControllable = Object.values(state.clocks).find(clk => clk.speakerAccess && clk.speakerAccess[myUsername] === 'controllable');
                     if (firstControllable) {
