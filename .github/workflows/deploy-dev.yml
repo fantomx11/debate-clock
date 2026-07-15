@@ -36,8 +36,29 @@ jobs:
       - name: Nest Dev Preview Environment
         run: |
           mkdir -p staging/dev
-          # Overwrite the /dev directory block inside staging with fresh dev branch modules
-          cp -r dev_code/classes dev_code/modules dev_code/styles dev_code/components dev_code/*.js dev_code/*.html staging/dev/
+          
+          # Prevent the script from crashing if a glob (like *.js) finds nothing
+          shopt -s nullglob
+          
+          # List all the items you want to copy
+          items=(
+            dev_code/classes
+            dev_code/modules
+            dev_code/styles
+            dev_code/components
+            dev_code/*.js
+            dev_code/*.html
+          )
+          
+          # Loop through and only copy them if they actually exist
+          for item in "${items[@]}"; do
+            if [ -e "$item" ]; then
+              cp -r "$item" staging/dev/
+              echo "Copied $item to staging/dev/"
+            else
+              echo "Skipping $item (does not exist)"
+            fi
+          done
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
